@@ -6,7 +6,9 @@ import models as _models
 import passlib.hash as _hash
 import sqlalchemy.orm as _orm
 import schema as _schema
+from passlib.context import CryptContext
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 _JWT_SECRET = "thisisnotverysafe"
 
@@ -44,7 +46,6 @@ async def create_token(user: _models.User):
     user_obj = _schema.UserBase.from_orm(user)
     user_dict = user_obj.dict()
    
-    
     token = _jwt.encode(user_dict, _JWT_SECRET, algorithm='HS256')
     
     return dict(access_token=token, token_type='bearer')
@@ -53,9 +54,6 @@ async def create_token(user: _models.User):
 async def verify_token(hashed_password):
     return  _jwt.decode(hashed_password, _JWT_SECRET)
 
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # check password is match
@@ -68,24 +66,29 @@ async def verify_token(token):
     return _jwt.decode(token, _JWT_SECRET, algorithms=['HS256'])
 
 # user update by token
-async def user_update(user: _schema, token, db: _orm.Session):
-    print(token.password)
-    print(user, 'datavdsasdg')
+async def user_update(user: _schema.UserUpdate, token, db: _orm.Session):
     verifyed_user = await verify_token(token.password)
     user_email = verifyed_user['email']
     
-    db_user = db.query(_models.User).filter(_models.User.email == user.email).one_or_none()
-    if db_user is None:
-        return None
-    result = db.query(_models.User).filter(_models.User.email == user_email).update(dict(user))
+    updated_user = db.query(_models.User).filter(_models.User.email == user_email)
+    updated_user.first()
+    if user.password:
+        hashed_password = _hash.bcrypt.hash(user.password)
     
-    return result
+    if updated_user == None:
+        raise HTTException(status_code=status.HTT_NOT_FOUND, detail=f'user with such id: {user_email} does not exist')
+    else:
+        del user.password
+        user.password = hashed_password
+        updated_user.update(user.dict(), synchronize_session=False)
+        db.commit()
 
+    return updated_user.first()
     
 # delete user by token
 async def delete_user(token, db: _orm.Session):
     verifyed_token = await verify_token(token.password)
     user_email = verifyed_token['email']
-    a =  db.query(_models.User).filter(_models.User.email == user_email).delete()
+    result =  db.query(_models.User).filter(_models.User.email == user_email).delete()
     db.commit()
-    return a
+    return result
